@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Pop Voice Note Fun</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;700;800&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --text-main: #4a5568;
+            --primary: #FF9F1C; 
+            --secondary: #2EC4B6;
+            --rose: #FF99C8;
+        }
+
+        body { 
+            font-family: "M PLUS Rounded 1c", sans-serif;
+            background-color: #F7F9FC;
+            color: var(--text-main);
+            overflow: hidden;
+        }
+
+        /* 背景のふわふわアニメーション */
+        .blob-cont {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            z-index: -1; pointer-events: none; overflow: hidden;
+        }
+        .blob {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(40px);
+            opacity: 0.6;
+            animation: float 10s infinite ease-in-out;
+        }
+        .blob-1 { background: #FFD6E0; width: 300px; height: 300px; top: -50px; left: -50px; animation-delay: 0s; }
+        .blob-2 { background: #C1E7E3; width: 250px; height: 250px; bottom: 10%; right: -50px; animation-delay: -2s; }
+        .blob-3 { background: #FAF3DD; width: 200px; height: 200px; top: 40%; left: 30%; animation-delay: -4s; }
+
+        @keyframes float {
+            0% { transform: translate(0, 0) rotate(0deg); }
+            33% { transform: translate(30px, -50px) rotate(10deg); }
+            66% { transform: translate(-20px, 20px) rotate(-5deg); }
+            100% { transform: translate(0, 0) rotate(0deg); }
+        }
+
+        /* 遊び心のあるインタラクション */
+        .btn-bounce { transition: transform 0.1s cubic-bezier(0.34, 1.56, 0.64, 1); }
+        .btn-bounce:active { transform: scale(0.9) rotate(-3deg); }
+        
+        .icon-wiggle:hover i { animation: wiggle 0.5s ease-in-out; }
+        @keyframes wiggle {
+            0%, 100% { transform: rotate(0); }
+            25% { transform: rotate(-15deg); }
+            75% { transform: rotate(15deg); }
+        }
+
+        /* カードの浮遊感 */
+        .glass-card {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255,255,255,0.6);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.03);
+            transition: all 0.2s;
+        }
+        .glass-card:hover {
+            transform: translateY(-3px) scale(1.01);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.06);
+            background: rgba(255, 255, 255, 0.95);
+        }
+
+        /* スクロールバー */
+        ::-webkit-scrollbar { width: 0px; background: transparent; }
+
+        /* 通知アニメーション */
+        .toast-enter { animation: toastIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+        .toast-exit { animation: toastOut 0.4s forwards; }
+        @keyframes toastIn { from { transform: translateY(100%) scale(0.5); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
+        @keyframes toastOut { from { transform: translateY(0) scale(1); opacity: 1; } to { transform: translateY(20px) scale(0.9); opacity: 0; } }
+
+        /* シークバー */
+        input[type=range].seek-bar { -webkit-appearance: none; background: transparent; height: 20px; width: 100%; }
+        input[type=range].seek-bar::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 18px; width: 18px; border-radius: 50%;
+            background: #FF9F1C; cursor: pointer; border: 3px solid white;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2); margin-top: -7px;
+        }
+        input[type=range].seek-bar::-webkit-slider-runnable-track { width: 100%; height: 6px; background: #E2E8F0; border-radius: 10px; }
+    </style>
+</head>
+<body class="h-screen flex flex-col selection:bg-yellow-200 selection:text-yellow-800">
+
+    <div class="blob-cont">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+        <div class="blob blob-3"></div>
+    </div>
+
+    <div id="toastArea" class="fixed bottom-24 left-1/2 transform -translate-x-1/2 z-[80] pointer-events-none"></div>
+
+    <input type="file" id="importFileInput" accept=".txt,.md,.docx" class="hidden" onchange="handleFileImport(this)">
+    <input type="file" id="restoreFileInput" accept=".json" class="hidden" onchange="handleRestoreBackup(this)">
+
+    <div id="globalLoader" class="fixed inset-0 bg-white/60 z-[100] flex flex-col items-center justify-center hidden backdrop-blur-sm">
+        <div class="flex gap-2 mb-2">
+            <div class="w-4 h-4 bg-pink-400 rounded-full animate-bounce" style="animation-delay: 0s"></div>
+            <div class="w-4 h-4 bg-yellow-400 rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
+            <div class="w-4 h-4 bg-blue-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+        </div>
+        <p class="text-gray-400 font-bold text-xs tracking-widest">LOADING...</p>
+    </div>
+
+    <div id="apiKeyModal" class="fixed inset-0 bg-gray-900/30 z-[60] flex items-center justify-center p-4 backdrop-blur-sm hidden">
+        <div class="bg-white p-6 rounded-[32px] shadow-2xl w-full max-w-sm text-center border-4 border-white/50 relative">
+            <button onclick="document.getElementById('apiKeyModal').classList.add('hidden')" class="absolute top-4 right-4 p-2 text-gray-300 hover:text-gray-500 transition-colors">
+                <i data-lucide="x" class="w-6 h-6"></i>
+            </button>
+            <div class="w-16 h-16 bg-gradient-to-tr from-yellow-300 to-orange-400 rounded-full flex items-center justify-center mx-auto mb-4 text-white shadow-lg transform -rotate-6">
+                <i data-lucide="key" class="w-8 h-8"></i>
+            </div>
+            <h2 class="text-xl font-extrabold mb-1 text-gray-700">API Key Setting</h2>
+            <p class="text-xs text-gray-400 mb-6 font-bold">OpenAIのAPIキーを入れてね！</p>
+            <input type="password" id="apiKeyInput" placeholder="sk-..." class="w-full p-4 bg-gray-50 border-2 border-gray-100 rounded-2xl mb-4 focus:outline-none focus:border-yellow-400 focus:bg-white text-center font-bold text-gray-600 transition-all">
+            <button onclick="saveApiKey()" class="w-full bg-gray-800 text-white py-4 rounded-2xl font-bold shadow-lg btn-bounce hover:bg-black">保存してスタート！ 🚀</button>
+        </div>
+    </div>
+
+    <div id="customInputModal" class="fixed inset-0 bg-gray-900/30 z-[70] flex items-center justify-center p-4 backdrop-blur-sm hidden">
+        <div class="bg-white p-6 rounded-[32px] shadow-2xl w-full max-w-sm transform scale-100 transition-all border-4 border-white/50">
+            <h3 id="inputModalTitle" class="font-extrabold text-xl mb-4 text-center text-gray-700">入力</h3>
+            <input type="text" id="inputModalValue" class="w-full p-4 border-2 border-gray-100 bg-gray-50 rounded-2xl mb-6 focus:outline-none focus:border-blue-400 focus:bg-white text-lg font-bold text-center text-gray-700" placeholder="...">
+            <div class="flex gap-3">
+                <button onclick="closeInputModal()" class="flex-1 py-3 bg-gray-100 text-gray-500 rounded-2xl font-bold hover:bg-gray-200 btn-bounce">キャンセル</button>
+                <button id="inputModalConfirmBtn" class="flex-1 py-3 bg-blue-500 text-white rounded-2xl font-bold shadow-lg shadow-blue-200 btn-bounce">OK 👌</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="customConfirmModal" class="fixed inset-0 bg-gray-900/30 z-[70] flex items-center justify-center p-4 backdrop-blur-sm hidden">
+        <div class="bg-white p-6 rounded-[32px] shadow-2xl w-full max-w-sm text-center border-4 border-white/50">
+            <div class="w-14 h-14 bg-red-100 text-red-500 rounded-full flex items-center justify-center mx-auto mb-3 animate-pulse">
+                <i data-lucide="alert-circle" class="w-8 h-8"></i>
+            </div>
+            <h3 class="font-extrabold text-lg mb-2 text-gray-800">確認</h3>
+            <p id="confirmModalMessage" class="text-gray-500 mb-6 font-bold text-sm">実行しますか？</p>
+            <div class="flex gap-3">
+                <button onclick="closeConfirmModal()" class="flex-1 py-3 bg-gray-100 text-gray-500 rounded-2xl font-bold btn-bounce">やめる</button>
+                <button id="confirmModalOkBtn" class="flex-1 py-3 bg-red-500 text-white rounded-2xl font-bold shadow-lg shadow-red-200 btn-bounce">実行 🔥</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="sidebarOverlay" onclick="toggleSidebar()" class="fixed inset-0 bg-gray-900/10 z-40 hidden transition-opacity opacity-0 backdrop-blur-sm"></div>
+    <aside id="sidebar" class="fixed inset-y-4 left-4 w-72 bg-white/90 backdrop-blur-xl z-50 transform -translate-x-[120%] transition-transform duration-300 shadow-2xl rounded-[32px] flex flex-col border border-white/50">
+        <div class="p-6 pb-2 flex justify-between items-center">
+            <span class="font-extrabold text-xl text-gray-700 tracking-tight">MENU 🍔</span>
+            <button onclick="toggleSidebar()" class="p-2 bg-gray-100 rounded-full hover:bg-gray-200 btn-bounce"><i data-lucide="x" class="w-5 h-5 text-gray-500"></i></button>
+        </div>
+        
+        <div class="p-4 space-y-2">
+             <button onclick="switchGroup('root'); switchRootTab('folders'); toggleSidebar()" class="w-full p-4 text-left rounded-2xl hover:bg-yellow-50 flex items-center gap-4 font-bold text-gray-600 transition-colors group btn-bounce">
+                <div class="w-10 h-10 bg-yellow-100 text-yellow-500 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <i data-lucide="layout-grid" class="w-5 h-5"></i>
+                </div>
+                フォルダ一覧
+            </button>
+             <button onclick="switchGroup('root'); switchRootTab('all'); toggleSidebar()" class="w-full p-4 text-left rounded-2xl hover:bg-blue-50 flex items-center gap-4 font-bold text-gray-600 transition-colors group btn-bounce">
+                <div class="w-10 h-10 bg-blue-100 text-blue-500 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <i data-lucide="list-music" class="w-5 h-5"></i>
+                </div>
+                すべてのメモ
+            </button>
+        </div>
+        
+        <div class="px-6 py-2"><div class="h-0.5 bg-gray-100 border-dashed border-gray-200 w-full"></div></div>
+
+        <div class="p-4 space-y-2">
+            <button onclick="switchGroup('trash'); toggleSidebar()" class="w-full p-4 text-left rounded-2xl hover:bg-red-50 flex items-center gap-4 font-bold text-gray-600 transition-colors group btn-bounce">
+                <div class="w-10 h-10 bg-red-100 text-red-500 rounded-xl flex items-center justify-center group-hover:rotate-12 transition-transform">
+                    <i data-lucide="trash-2" class="w-5 h-5"></i>
+                </div>
+                ゴミ箱
+            </button>
+            <button onclick="openApiKeySettings(); toggleSidebar()" class="w-full p-4 text-left rounded-2xl hover:bg-orange-50 flex items-center gap-4 font-bold text-gray-600 transition-colors group btn-bounce">
+                <div class="w-10 h-10 bg-orange-100 text-orange-500 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <i data-lucide="key" class="w-5 h-5"></i>
+                </div>
+                APIキー設定
+            </button>
+        </div>
+        
+        <div class="mt-auto p-4 m-4 bg-gray-50/80 rounded-2xl border border-gray-100">
+            <h3 class="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-3 text-center">DATA SAVE / LOAD</h3>
+            <div class="grid grid-cols-2 gap-3">
+                <button onclick="downloadBackup()" class="flex flex-col items-center justify-center p-3 bg-white border border-gray-200 rounded-xl hover:border-blue-400 hover:text-blue-500 transition-all shadow-sm btn-bounce">
+                    <i data-lucide="download-cloud" class="w-5 h-5 mb-1"></i>
+                    <span class="text-[10px] font-bold">保存</span>
+                </button>
+                <button onclick="document.getElementById('restoreFileInput').click()" class="flex flex-col items-center justify-center p-3 bg-white border border-gray-200 rounded-xl hover:border-green-400 hover:text-green-500 transition-all shadow-sm btn-bounce">
+                    <i data-lucide="refresh-cw" class="w-5 h-5 mb-1"></i>
+                    <span class="text-[10px] font-bold">復元</span>
+                </button>
+            </div>
+        </div>
+    </aside>
+
+    <div class="flex flex-col z-10 sticky top-0 transition-all duration-200" id="mainHeader">
+        <header class="h-16 flex items-center justify-between px-4">
+            <div class="flex items-center w-24">
+                <button id="btnMenu" onclick="toggleSidebar()" class="text-gray-600 p-2.5 bg-white/80 hover:bg-white rounded-full shadow-sm hover:shadow-md transition-all btn-bounce hidden">
+                    <i data-lucide="menu" class="w-6 h-6"></i>
+                </button>
+                <button id="btnBackToRoot" onclick="switchGroup('root')" class="text-gray-600 flex items-center font-bold text-sm bg-white/80 px-3 py-2 rounded-full shadow-sm hover:shadow-md hidden btn-bounce gap-1">
+                    <i data-lucide="arrow-left" class="w-4 h-4"></i> 戻る
+                </button>
+                <button id="btnBackToList" onclick="backToList()" class="text-gray-600 flex items-center font-bold text-sm bg-white/80 px-3 py-2 rounded-full shadow-sm hover:shadow-md hidden btn-bounce gap-1">
+                    <i data-lucide="arrow-left" class="w-4 h-4"></i> 戻る
+                </button>
+            </div>
+
+            <h1 id="headerTitle" class="font-extrabold text-lg truncate px-2 text-center absolute left-1/2 transform -translate-x-1/2 w-1/2 text-gray-700 tracking-tight">
+                Pop Notes 🎈
+            </h1>
+
+            <div class="flex items-center justify-end w-24 gap-2">
+                <button id="btnImport" onclick="document.getElementById('importFileInput').click()" class="bg-white/80 text-gray-500 p-2.5 rounded-full shadow-sm hover:text-blue-500 hover:shadow-md hidden transition-all btn-bounce" title="インポート">
+                    <i data-lucide="file-down" class="w-5 h-5"></i>
+                </button>
+
+                <button id="btnAddGroup" onclick="openCreateGroupModal()" class="bg-yellow-400 text-white p-2.5 rounded-full shadow-lg shadow-yellow-200 hidden btn-bounce hover:bg-yellow-500">
+                    <i data-lucide="folder-plus" class="w-5 h-5"></i>
+                </button>
+                <button id="btnAddItem" onclick="createNewItem()" class="bg-blue-500 text-white p-2.5 rounded-full shadow-lg shadow-blue-200 hidden btn-bounce hover:bg-blue-600">
+                    <i data-lucide="plus" class="w-6 h-6"></i>
+                </button>
+                <div id="editActions" class="hidden flex items-center">
+                    <button onclick="backToList()" class="text-white font-bold px-4 py-2 bg-gradient-to-r from-blue-400 to-blue-500 hover:from-blue-500 hover:to-blue-600 rounded-full shadow-lg shadow-blue-200 transition-all text-xs btn-bounce flex items-center gap-1">
+                        <i data-lucide="check" class="w-4 h-4"></i> 完了
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <div id="rootTabs" class="flex px-4 pb-2 gap-3 hidden justify-center">
+            <button onclick="switchRootTab('folders')" id="tabFolders" class="px-4 py-1.5 text-xs font-bold rounded-full transition-all flex items-center gap-1 btn-bounce border shadow-sm">
+                📁 フォルダ
+            </button>
+            <button onclick="switchRootTab('all')" id="tabAll" class="px-4 py-1.5 text-xs font-bold rounded-full transition-all flex items-center gap-1 btn-bounce border shadow-sm">
+                📝 全リスト
+            </button>
+        </div>
+    </div>
+
+    <main class="flex-1 overflow-hidden relative">
+        <div id="listView" class="h-full overflow-y-auto p-4 pb-36">
+            <div id="emptyTrashContainer" class="max-w-2xl mx-auto mb-6 hidden">
+                <button onclick="requestEmptyTrash()" class="w-full py-3 bg-red-100 text-red-500 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-red-200 transition-colors border border-red-200 shadow-sm btn-bounce">
+                    <i data-lucide="bomb" class="w-5 h-5"></i> ゴミ箱を空にする
+                </button>
+            </div>
+            <div id="listContainer" class="max-w-3xl mx-auto space-y-3"></div>
+            <div id="emptyMsg" class="text-center mt-32 hidden">
+                <div class="w-24 h-24 bg-white rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm animate-bounce">
+                    <span class="text-4xl">✨</span>
+                </div>
+                <p id="emptyMsgText" class="text-gray-400 font-bold text-sm bg-white/50 inline-block px-4 py-2 rounded-full">アイテムを作ってみよう！</p>
+            </div>
+        </div>
+
+        <div id="detailView" class="absolute inset-0 bg-[#F7F9FC] flex flex-col hidden transform transition-transform duration-300 translate-x-full z-20">
+            <div class="px-4 pt-2 max-w-3xl mx-auto w-full">
+                <div class="bg-white/80 backdrop-blur-sm rounded-full px-1 shadow-sm border border-white inline-block">
+                    <div class="relative">
+                        <select id="itemGroupSelect" onchange="handleGroupChange(this); handleAutoSave();" class="bg-transparent pl-4 pr-8 py-2 text-xs font-bold text-gray-500 focus:outline-none appearance-none cursor-pointer hover:text-blue-500 transition-colors">
+                        </select>
+                        <i data-lucide="chevron-down" class="w-3 h-3 text-gray-300 absolute right-3 top-2.5 pointer-events-none"></i>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex-1 overflow-y-auto p-4 max-w-3xl mx-auto w-full no-scrollbar">
+                <div class="bg-white/80 backdrop-blur-sm rounded-[32px] p-6 shadow-sm border border-white min-h-[60vh] relative">
+                    <input type="text" id="inputTitle" oninput="handleAutoSave()" class="w-full text-2xl font-extrabold bg-transparent border-none p-0 focus:ring-0 placeholder-gray-300 text-gray-800 mb-4" placeholder="タイトルはここ！">
+                    <div class="w-12 h-1 bg-yellow-200 rounded-full mb-6"></div>
+                    <textarea id="inputContent" oninput="handleAutoSave()" class="w-full h-full bg-transparent text-base leading-relaxed p-0 resize-none border-none focus:ring-0 placeholder-gray-300 text-gray-600 font-medium" placeholder="ここにメモを書いてね... 🖊️"></textarea>
+                </div>
+                <div class="h-40"></div>
+            </div>
+
+            <div class="absolute bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl border-t border-white/50 rounded-t-[32px] shadow-[0_-8px_30px_rgba(0,0,0,0.05)] z-30 transition-all duration-300" id="playerPanel">
+                <div class="max-w-3xl mx-auto p-5 pb-8">
+                    <div id="playbackControls" class="mb-4 hidden">
+                        <div class="flex justify-between items-end mb-2 px-1">
+                            <div class="text-xs font-extrabold text-blue-500 truncate max-w-[70%]" id="currentChapterTitle"></div>
+                            <div class="text-[10px] text-gray-400 font-bold font-mono bg-gray-100 px-2 py-0.5 rounded-full">
+                                <span id="currentTimeDisplay">00</span> / <span id="totalTimeDisplay">00</span>
+                            </div>
+                        </div>
+                        <input type="range" id="progressBar" min="0" max="100" value="0" step="1" 
+                            class="seek-bar"
+                            oninput="handleSeekInput(this.value)"
+                            onchange="handleSeekChange(this.value)">
+                    </div>
+
+                    <div class="flex items-center justify-between gap-4">
+                        <div class="flex-1">
+                            <select id="voiceSelect" class="bg-gray-50 border border-gray-100 rounded-xl px-3 py-2 text-[10px] font-bold text-gray-500 focus:outline-none w-full appearance-none text-center hover:bg-white transition-colors cursor-pointer">
+                                <option value="alloy">Alloy (標準)</option>
+                                <option value="nova">Nova (元気)</option>
+                                <option value="shimmer">Shimmer (クリア)</option>
+                                <option value="echo">Echo (ソフト)</option>
+                                <option value="onyx">Onyx (渋い)</option>
+                                <option value="fable">Fable (物語)</option>
+                            </select>
+                        </div>
+
+                        <div class="flex-shrink-0 -mt-10">
+                            <button id="playBtn" onclick="togglePlay()" class="bg-gradient-to-b from-blue-400 to-blue-500 text-white w-20 h-20 rounded-full flex items-center justify-center shadow-xl shadow-blue-200 active:scale-95 transition-all hover:-translate-y-1 border-4 border-white ring-4 ring-blue-50">
+                                <i id="iconPlay" data-lucide="play" class="w-8 h-8 ml-1 fill-current"></i>
+                                <i id="iconPause" data-lucide="pause" class="w-8 h-8 hidden fill-current"></i>
+                                <div id="spinner" class="w-8 h-8 border-4 border-white/30 border-t-white rounded-full animate-spin hidden"></div>
+                            </button>
+                        </div>
+
+                        <div class="flex-1 flex justify-end items-center gap-2">
+                            <div class="relative group">
+                                <div class="bg-gray-50 rounded-xl px-3 py-2 text-[10px] font-bold text-gray-500 cursor-pointer border border-gray-100 flex items-center gap-1 hover:bg-white transition-colors">
+                                    ⚡ <span id="speedVal">1.0</span>x
+                                </div>
+                                <div class="absolute bottom-full right-0 mb-3 hidden group-hover:block bg-white p-3 rounded-2xl shadow-xl border border-gray-100 w-32 z-50 animate-bounce">
+                                    <input type="range" id="speedRange" min="0.5" max="2.0" step="0.1" value="1.0" class="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                                </div>
+                            </div>
+                            <button id="btnDeleteInEditor" onclick="requestDeleteCurrentItem()" class="text-gray-300 hover:text-red-500 p-2 transition-colors rounded-full hover:bg-red-50 btn-bounce">
+                                <i data-lucide="trash-2" class="w-5 h-5"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const API_URL = 'https://api.openai.com/v1/audio/speech';
+        function sanitizeApiKey(key) { if(!key) return ''; return key.replace(/[^\x20-\x7E]/g, '').trim(); }
+        let apiKey = sanitizeApiKey(localStorage.getItem('openai_api_key'));
+
+        let groups = JSON.parse(localStorage.getItem('voice_groups')) || [];
+        const defaultGroups = [
+            { id: 'all', name: 'すべてのメモ', isSystem: true }, 
+            { id: 'uncategorized', name: '未分類', isSystem: true },
+            { id: 'trash', name: 'ゴミ箱', isSystem: true }
+        ];
+        defaultGroups.forEach(d => { if (!groups.find(g => g.id === d.id)) groups.push(d); });
+        groups = groups.reduce((acc, current) => { const x = acc.find(item => item.id === current.id); return !x ? acc.concat([current]) : acc; }, []);
+
+        let articles = JSON.parse(localStorage.getItem('my_voice_list')) || [];
+        articles.forEach(a => { if (!a.groupId) a.groupId = 'uncategorized'; });
+
+        let currentView = 'root'; 
+        let currentGroupId = null; 
+        let currentRootTab = 'folders'; 
+        let editingId = null;
+        let autoSaveTimer = null;
+        let audioPlayer = new Audio();
+        let chunkList = [], currentChunkIndex = 0, isPlaying = false, audioCache = {};
+
+        const pastelColors = [
+            { bg: 'bg-pink-100', text: 'text-pink-500', icon: 'bg-pink-200' },
+            { bg: 'bg-blue-100', text: 'text-blue-500', icon: 'bg-blue-200' },
+            { bg: 'bg-yellow-100', text: 'text-yellow-600', icon: 'bg-yellow-200' },
+            { bg: 'bg-green-100', text: 'text-green-500', icon: 'bg-green-200' },
+            { bg: 'bg-purple-100', text: 'text-purple-500', icon: 'bg-purple-200' },
+            { bg: 'bg-orange-100', text: 'text-orange-500', icon: 'bg-orange-200' },
+        ];
+        function getColor(str) {
+            let hash = 0; for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+            return pastelColors[Math.abs(hash) % pastelColors.length];
+        }
+
+        function showGlobalLoader() { document.getElementById('globalLoader').classList.remove('hidden'); }
+        function hideGlobalLoader() { document.getElementById('globalLoader').classList.add('hidden'); }
+        function showToast(msg) {
+            const area = document.getElementById('toastArea');
+            const el = document.createElement('div');
+            el.className = 'bg-gray-800 text-white px-6 py-3 rounded-full shadow-xl font-bold text-sm toast-enter flex items-center gap-2';
+            el.innerHTML = `<span class="text-lg">✨</span> ${msg}`;
+            area.appendChild(el);
+            setTimeout(() => { el.classList.remove('toast-enter'); el.classList.add('toast-exit'); setTimeout(() => el.remove(), 400); }, 2000);
+        }
+
+        lucide.createIcons();
+        if (!apiKey) document.getElementById('apiKeyModal').classList.remove('hidden');
+        renderSidebar();
+        switchGroup('root');
+
+        // --- API設定ロジック ---
+        function openApiKeySettings() {
+            document.getElementById('apiKeyInput').value = apiKey || '';
+            document.getElementById('apiKeyModal').classList.remove('hidden');
+        }
+
+        function saveApiKey() { 
+            let v = sanitizeApiKey(document.getElementById('apiKeyInput').value.trim()); 
+            if(v.length > 10){ 
+                apiKey = v; 
+                localStorage.setItem('openai_api_key', apiKey); 
+                document.getElementById('apiKeyModal').classList.add('hidden'); 
+                showToast("APIキーを保存しました！"); 
+            } else { 
+                alert("APIキーが無効です"); 
+            } 
+        }
+
+        // --- バックアップ・ファイル操作 ---
+        function downloadBackup() {
+            const data = { timestamp: Date.now(), groups: groups, articles: articles };
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a'); a.href = url; a.download = `voice_note_fun_${new Date().toISOString().slice(0,10)}.json`;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+            showToast("バックアップを作成しました！");
+        }
+
+        function handleRestoreBackup(input) {
+            if (input.files && input.files[0]) {
+                const file = input.files[0]; showGlobalLoader();
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    try {
+                        const data = JSON.parse(e.target.result); hideGlobalLoader();
+                        if (!data.groups || !data.articles) throw new Error("無効なファイル");
+                        showConfirmModal('データを復元しますか？\n（現在のデータは上書きされます）', () => {
+                            groups = data.groups; articles = data.articles;
+                            if(!groups.find(g=>g.id==='trash')) groups.push({id:'trash', name:'ゴミ箱', isSystem:true});
+                            saveData(); showToast("復元完了！おかえりなさい 🎉"); setTimeout(()=>location.reload(), 1000);
+                        });
+                    } catch(err) { hideGlobalLoader(); alert("エラー: " + err.message); }
+                    input.value = '';
+                }; reader.readAsText(file);
+            }
+        }
+
+        function handleFileImport(input) {
+            if (input.files && input.files[0]) {
+                const file = input.files[0]; const name = file.name; showGlobalLoader();
+                setTimeout(() => {
+                    if (name.toLowerCase().endsWith('.docx')) {
+                        const reader = new FileReader();
+                        reader.onload = function(e) {
+                            mammoth.convertToHtml({ arrayBuffer: e.target.result })
+                                .then(function(result) {
+                                    let md = convertDocxHtmlToMarkdown(result.value);
+                                    processImportContent(name, md);
+                                }).catch(err => { hideGlobalLoader(); alert("Word読込失敗: "+err.message); });
+                        }; reader.readAsArrayBuffer(file);
+                    } else {
+                        const reader = new FileReader();
+                        reader.onload = function(e) { processImportContent(name, e.target.result); };
+                        reader.readAsText(file);
+                    } input.value = '';
+                }, 100);
+            }
+        }
+
+        function convertDocxHtmlToMarkdown(html) {
+            let text = html.replace(/<h1[^>]*>(.*?)<\/h1>/gi, '\n# $1\n').replace(/<h[2-6][^>]*>(.*?)<\/h[2-6]>/gi, '\n## $1\n').replace(/<\/p>/gi, '\n').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '');
+            const t = document.createElement('textarea'); t.innerHTML = text; return t.value.trim();
+        }
+
+        function processImportContent(fileName, text) {
+            if (!text || !text.trim()) { hideGlobalLoader(); return; }
+            const cleanName = fileName.replace(/\.[^/.]+$/, "");
+            const newGroupId = 'g_' + Date.now();
+            groups.push({ id: newGroupId, name: cleanName });
+            const lines = text.split(/\r?\n/);
+            let sections = [], currentTitle = "導入", currentBuffer = "", hasHeader = false;
+            const pushSec = () => { if(currentBuffer.trim()) sections.push({title:currentTitle, content:currentBuffer.trim()}); };
+            lines.forEach(line => {
+                const m = line.match(/^(#{1,6})\s+(.+)/);
+                if (m) { pushSec(); currentTitle = m[2].trim(); currentBuffer = line + "\n"; hasHeader = true; }
+                else { currentBuffer += line + "\n"; }
+            }); pushSec();
+            if (!hasHeader && sections.length > 0) sections[0].title = cleanName;
+            const baseTime = Date.now();
+            const newItems = sections.map((sec, i) => ({ id: baseTime + (sections.length - i), title: sec.title, content: sec.content, groupId: newGroupId }));
+            articles = [...newItems.reverse(), ...articles];
+            saveData(); renderSidebar(); hideGlobalLoader(); switchGroup(newGroupId);
+            showToast(`${sections.length}件 インポートしました！`);
+        }
+
+        // --- ビュー制御 ---
+        function switchGroup(groupId) {
+            stopAudioSequence(); currentGroupId = groupId;
+            document.getElementById('emptyTrashContainer').classList.add('hidden');
+            if (groupId === 'root') { currentView = 'root'; renderRootView(); } 
+            else { currentView = 'group'; renderGroupView(groupId); if (groupId === 'trash') document.getElementById('emptyTrashContainer').classList.remove('hidden'); }
+            updateHeader();
+            document.getElementById('detailView').classList.add('translate-x-full');
+            setTimeout(() => document.getElementById('detailView').classList.add('hidden'), 300);
+            const s = document.getElementById('sidebar'); if (!s.classList.contains('-translate-x-[120%]')) toggleSidebar();
+        }
+
+        function switchRootTab(tab) { currentRootTab = tab; renderRootView(); }
+
+        function backToList() {
+            stopAudioSequence(); saveCurrentItem(false);
+            if (currentGroupId === 'root') renderRootView(); else switchGroup(currentGroupId);
+        }
+
+        function updateHeader() {
+            const titleEl = document.getElementById('headerTitle');
+            const rootTabs = document.getElementById('rootTabs');
+            ['btnMenu', 'btnBackToRoot', 'btnBackToList', 'btnAddGroup', 'btnAddItem', 'btnImport', 'editActions'].forEach(id => document.getElementById(id).classList.add('hidden'));
+            rootTabs.classList.add('hidden');
+
+            if (currentView === 'root') {
+                titleEl.textContent = 'Pop Notes 🎈';
+                document.getElementById('btnMenu').classList.remove('hidden');
+                rootTabs.classList.remove('hidden');
+                const tFolders = document.getElementById('tabFolders'); const tAll = document.getElementById('tabAll');
+                const active = "bg-white text-blue-500 shadow-sm border-blue-100"; 
+                const inactive = "bg-transparent text-gray-400 border-transparent hover:bg-white/50";
+                if (currentRootTab === 'folders') {
+                    tFolders.className = "px-4 py-1.5 text-xs font-bold rounded-full transition-all flex items-center gap-1 btn-bounce border " + active;
+                    tAll.className = "px-4 py-1.5 text-xs font-bold rounded-full transition-all flex items-center gap-1 btn-bounce border " + inactive;
+                    document.getElementById('btnAddGroup').classList.remove('hidden');
+                    document.getElementById('btnImport').classList.remove('hidden');
+                } else {
+                    tFolders.className = "px-4 py-1.5 text-xs font-bold rounded-full transition-all flex items-center gap-1 btn-bounce border " + inactive;
+                    tAll.className = "px-4 py-1.5 text-xs font-bold rounded-full transition-all flex items-center gap-1 btn-bounce border " + active;
+                    document.getElementById('btnAddItem').classList.remove('hidden');
+                }
+            } else if (currentView === 'group') {
+                const group = groups.find(g => g.id === currentGroupId);
+                titleEl.textContent = group ? group.name : 'リスト';
+                document.getElementById('btnBackToRoot').classList.remove('hidden');
+                if (currentGroupId !== 'trash') document.getElementById('btnAddItem').classList.remove('hidden');
+            } else if (currentView === 'edit') {
+                titleEl.textContent = '編集中...';
+                document.getElementById('btnBackToList').classList.remove('hidden');
+                document.getElementById('editActions').classList.remove('hidden');
+            }
+        }
+
+        function renderRootView() {
+            const container = document.getElementById('listContainer');
+            const emptyMsg = document.getElementById('emptyMsg');
+            container.innerHTML = '';
+            container.className = "max-w-3xl mx-auto space-y-3";
+            if (currentRootTab === 'folders') {
+                const displayGroups = [...groups.filter(g => !g.isSystem && g.id !== 'all').reverse(), groups.find(g => g.id === 'uncategorized')].filter(Boolean);
+                displayGroups.forEach((g, i) => {
+                    const count = articles.filter(a => a.groupId === g.id).length;
+                    const div = document.createElement('div');
+                    const c = getColor(g.id);
+                    const isUncat = g.id === 'uncategorized';
+                    const iconBg = isUncat ? 'bg-gray-100 text-gray-400' : `${c.bg} ${c.text}`;
+                    div.className = "glass-card p-4 rounded-[20px] flex items-center justify-between cursor-pointer active:scale-[0.98] transition-all group icon-wiggle";
+                    div.onclick = () => switchGroup(g.id);
+                    let actions = '';
+                    if (!g.isSystem) {
+                        actions = `<div class="flex gap-1 ml-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onclick="requestRenameGroup(event, '${g.id}')" class="p-2 bg-gray-50 rounded-full text-gray-400 hover:text-blue-500 btn-bounce"><i data-lucide="pencil" class="w-4 h-4"></i></button>
+                            <button onclick="requestDeleteGroup(event, '${g.id}')" class="p-2 bg-gray-50 rounded-full text-gray-400 hover:text-red-500 btn-bounce"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                        </div>`;
+                    }
+                    div.innerHTML = `
+                        <div class="flex items-center gap-4 flex-1 overflow-hidden">
+                            <div class="${iconBg} w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 shadow-inner">
+                                <i data-lucide="${isUncat ? 'inbox' : 'folder'}" class="w-5 h-5"></i>
+                            </div>
+                            <div class="flex flex-col overflow-hidden">
+                                <span class="font-extrabold text-gray-700 truncate text-base">${g.name}</span>
+                                <span class="text-xs text-gray-400 font-bold bg-white/50 self-start px-2 py-0.5 rounded-full">${count} items</span>
+                            </div>
+                        </div>
+                        ${actions}
+                        <i data-lucide="chevron-right" class="w-5 h-5 text-gray-300 ml-2 group-hover:translate-x-1 transition-transform"></i>
+                    `;
+                    container.appendChild(div);
+                });
+                if (displayGroups.length === 0) { document.getElementById('emptyMsgText').textContent = "フォルダがありません 🥚"; emptyMsg.classList.remove('hidden'); }
+                else { emptyMsg.classList.add('hidden'); }
+            } else {
+                const validArticles = articles.filter(a => a.groupId !== 'trash');
+                renderArticleList(container, emptyMsg, validArticles);
+            }
+            lucide.createIcons(); updateHeader();
+        }
+
+        function renderGroupView(groupId) {
+            const container = document.getElementById('listContainer');
+            const emptyMsg = document.getElementById('emptyMsg');
+            container.innerHTML = '';
+            container.className = "max-w-3xl mx-auto space-y-3";
+            const filtered = articles.filter(a => a.groupId === groupId);
+            if (groupId === 'trash' && filtered.length === 0) { document.getElementById('emptyMsgText').textContent = "ゴミ箱は空っぽです ✨"; emptyMsg.classList.remove('hidden'); }
+            else { renderArticleList(container, emptyMsg, filtered, false); }
+            updateHeader();
+        }
+
+        function renderArticleList(container, emptyMsg, listData, showBadge = true) {
+            const sorted = [...listData].sort((a, b) => b.id - a.id);
+            if (sorted.length === 0) {
+                if(currentGroupId !== 'trash') document.getElementById('emptyMsgText').textContent = "メモがありません。\n＋ボタンで追加してね！";
+                emptyMsg.classList.remove('hidden');
+            } else {
+                emptyMsg.classList.add('hidden');
+                sorted.forEach(item => {
+                    const gName = groups.find(g => g.id === item.groupId)?.name;
+                    const div = document.createElement('div');
+                    const c = getColor(item.groupId);
+                    div.className = "glass-card p-4 rounded-[20px] hover:-translate-y-1 cursor-pointer flex flex-col active:scale-[0.99] group relative overflow-hidden";
+                    div.onclick = () => editItem(item.id);
+                    const shouldShowBadge = showBadge && gName && item.groupId !== 'uncategorized';
+                    const previewText = item.content ? item.content.slice(0, 80).replace(/\n/g, ' ') : '...';
+                    const decor = `<i data-lucide="file-heart" class="absolute -bottom-2 -right-2 w-16 h-16 text-gray-100 group-hover:text-blue-50 transition-colors transform rotate-12 -z-0"></i>`;
+                    div.innerHTML = `
+                        ${decor}
+                        <div class="flex justify-between items-start mb-2 gap-2 relative z-10">
+                            <div class="font-extrabold text-gray-700 line-clamp-1 text-base group-hover:text-blue-500 transition-colors">${item.title || '無題のメモ'}</div>
+                            ${shouldShowBadge ? `<span class="text-[10px] ${c.bg} ${c.text} px-2 py-0.5 rounded-full font-bold whitespace-nowrap shadow-sm">${gName}</span>` : ''}
+                        </div>
+                        <div class="text-xs text-gray-500 line-clamp-2 leading-relaxed font-bold opacity-80 relative z-10">${previewText}</div>
+                    `;
+                    container.appendChild(div);
+                });
+            }
+            lucide.createIcons();
+        }
+
+        // --- データ操作 ---
+        function createNewItem() {
+            let targetGroup = 'uncategorized';
+            if (currentView === 'group' && currentGroupId && currentGroupId !== 'all' && currentGroupId !== 'trash') targetGroup = currentGroupId;
+            const newId = Date.now();
+            const newItem = { id: newId, title: "", content: "", groupId: targetGroup };
+            articles.unshift(newItem); saveData(); editItem(newId);
+        }
+
+        function editItem(id) {
+            editingId = id; const item = articles.find(a => a.id === id); if (!item) return;
+            document.getElementById('inputTitle').value = item.title; document.getElementById('inputContent').value = item.content;
+            updateGroupSelect(); document.getElementById('itemGroupSelect').value = item.groupId || 'uncategorized';
+            currentView = 'edit'; updateHeader();
+            const detail = document.getElementById('detailView'); detail.classList.remove('hidden'); void detail.offsetWidth; detail.classList.remove('translate-x-full');
+            const delBtn = document.getElementById('btnDeleteInEditor');
+            if (item.groupId === 'trash') delBtn.classList.replace('text-gray-300', 'text-red-400'); else delBtn.classList.replace('text-red-400', 'text-gray-300');
+            stopAudioSequence(); lucide.createIcons();
+        }
+
+        function handleAutoSave() {
+            clearTimeout(autoSaveTimer); autoSaveTimer = setTimeout(() => { saveCurrentItem(false); showToast("保存しました 💾"); }, 2000);
+        }
+
+        function saveCurrentItem() {
+            if (!editingId) return;
+            const title = document.getElementById('inputTitle').value; const content = document.getElementById('inputContent').value;
+            const groupId = document.getElementById('itemGroupSelect').value; const index = articles.findIndex(a => a.id === editingId);
+            if (index !== -1) { articles[index].title = title; articles[index].content = content; if(groupId !== 'CREATE_NEW') articles[index].groupId = groupId; saveData(); }
+        }
+
+        function requestDeleteCurrentItem() {
+            const item = articles.find(a => a.id === editingId); if (!item) return;
+            if (item.groupId === 'trash') {
+                showConfirmModal('本当に削除しちゃう？ 🗑️', () => { articles = articles.filter(a => a.id !== editingId); saveData(); backToList(); showToast("削除しました バイバイ👋"); });
+            } else {
+                showConfirmModal('ゴミ箱へ移動しますか？', () => { item.groupId = 'trash'; saveData(); backToList(); showToast("ゴミ箱へ移動しました"); });
+            }
+        }
+
+        function requestDeleteGroup(e, groupId) {
+            e.stopPropagation(); const group = groups.find(g => g.id === groupId); const count = articles.filter(a => a.groupId === groupId).length;
+            showConfirmModal(`「${group.name}」を削除？\nメモ${count}件はゴミ箱に入ります。`, () => {
+                articles.forEach(a => { if (a.groupId === groupId) a.groupId = 'trash'; });
+                groups = groups.filter(g => g.id !== groupId); saveData(); renderRootView(); renderSidebar(); showToast("フォルダを削除しました");
+            });
+        }
+
+        function requestEmptyTrash() {
+             const count = articles.filter(a => a.groupId === 'trash').length; if (count === 0) return alert('ゴミ箱は空です');
+             showConfirmModal(`${count}件のメモを完全に削除しますか？`, () => { articles = articles.filter(a => a.groupId !== 'trash'); saveData(); renderGroupView('trash'); showToast("スッキリしました！✨"); });
+        }
+
+        function saveData() { localStorage.setItem('my_voice_list', JSON.stringify(articles)); localStorage.setItem('voice_groups', JSON.stringify(groups)); }
+
+        function openCreateGroupModal() { showInputModal('新しいフォルダ名', '', (name) => { groups.push({ id: 'g_' + Date.now(), name: name }); saveData(); renderRootView(); renderSidebar(); showToast(`「${name}」を作成しました！`); }); }
+        function requestRenameGroup(e, groupId) { e.stopPropagation(); const group = groups.find(g => g.id === groupId); showInputModal('名前を変更', group.name, (newName) => { group.name = newName; saveData(); renderRootView(); renderSidebar(); }); }
+
+        function updateGroupSelect() {
+            const select = document.getElementById('itemGroupSelect');
+            select.innerHTML = groups.filter(g => g.id !== 'all').map(g => `<option value="${g.id}">${g.name}</option>`).join('') + `<option value="CREATE_NEW">＋ 新しいフォルダ...</option>`;
+        }
+        function handleGroupChange(select) {
+            if (select.value === 'CREATE_NEW') {
+                showInputModal('新しいフォルダ', '', (name) => {
+                     const newGroup = { id: 'g_' + Date.now(), name: name };
+                     groups.push(newGroup); saveData(); updateGroupSelect(); select.value = newGroup.id; saveCurrentItem(false); showToast("フォルダを作成しました！");
+                });
+            }
+        }
+        function renderSidebar() {} 
+
+        // --- 再生ロジック ---
+        function splitLongText(text, maxChars = 250) {
+            if (!text) return []; const sentences = text.split(/([。！？\n\.\!\?])/); let chunks = [], currentChunk = "";
+            for (let i = 0; i < sentences.length; i++) {
+                const s = sentences[i]; if ((currentChunk + s).length > maxChars && currentChunk.length > 0) { chunks.push(currentChunk); currentChunk = s; } else { currentChunk += s; }
+            } if (currentChunk) chunks.push(currentChunk); return chunks.filter(c => c.trim().length > 0);
+        }
+
+        function generateSmartChunks(fullText) {
+            if(!fullText.trim()) return []; const lines = fullText.split('\n'); let resultChunks = [], currentTitle = "導入", currentBuffer = "";
+            const pushSec = (t, txt) => {
+                if (txt.length < 250) { resultChunks.push({ title: t, text: txt }); } 
+                else { splitLongText(txt, 250).forEach((chunk, idx, arr) => { resultChunks.push({ title: arr.length > 1 ? `${t} (${idx + 1}/${arr.length})` : t, text: chunk }); }); }
+            };
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i]; if (line.match(/^#+\s+/)) { if (currentBuffer.trim()) pushSec(currentTitle, currentBuffer); currentTitle = line.replace(/^#+\s+/, '').trim(); currentBuffer = ""; } else { currentBuffer += line + "\n"; }
+            } if (currentBuffer.trim()) pushSec(currentTitle, currentBuffer); return resultChunks;
+        }
+
+        async function togglePlay() {
+            if (isPlaying) { stopAudioSequence(); } 
+            else {
+                const text = document.getElementById('inputContent').value; if (!text.trim()) return alert('文字を入力してください');
+                chunkList = generateSmartChunks(text); if (chunkList.length === 0) return;
+                audioCache = {}; currentChunkIndex = 0; startPlaybackSequence();
+            }
+        }
+
+        async function startPlaybackSequence() { isPlaying = true; updatePlayUI(true, true); document.getElementById('playbackControls').classList.remove('hidden'); updateProgressDisplay(); await playChunk(currentChunkIndex); }
+        async function playChunk(index) {
+            if (!isPlaying) return; if (index >= chunkList.length) { stopAudioSequence(); return; }
+            currentChunkIndex = index; updateProgressDisplay(); const chunkObj = chunkList[index]; if (!audioCache[index]) updatePlayUI(true, true);
+            try {
+                let blob = audioCache[index] || await fetchAudio(chunkObj.text); audioCache[index] = blob;
+                if (!isPlaying || currentChunkIndex !== index) return;
+                if (audioPlayer.src) URL.revokeObjectURL(audioPlayer.src);
+                audioPlayer.src = URL.createObjectURL(blob); audioPlayer.playbackRate = parseFloat(document.getElementById('speedRange').value);
+                await audioPlayer.play(); updatePlayUI(true, false); preloadNextChunk(index + 1);
+                audioPlayer.onended = () => { playChunk(index + 1); };
+            } catch (e) { console.error(e); alert('再生エラー: APIキーを確認してください'); stopAudioSequence(); }
+        }
+        async function preloadNextChunk(index) { if (index < chunkList.length && !audioCache[index]) { try { const blob = await fetchAudio(chunkList[index].text); if (isPlaying) audioCache[index] = blob; } catch (e) {} } }
+        async function fetchAudio(text) {
+            if(apiKey) apiKey = sanitizeApiKey(apiKey);
+            const res = await fetch(API_URL, { method: 'POST', headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'tts-1', input: text, voice: document.getElementById('voiceSelect').value }) });
+            if (!res.ok) throw new Error('API Error'); return await res.blob();
+        }
+        function stopAudioSequence() { isPlaying = false; audioPlayer.pause(); audioPlayer.currentTime = 0; if (audioPlayer.src) { URL.revokeObjectURL(audioPlayer.src); audioPlayer.removeAttribute('src'); } updatePlayUI(false, false); }
+        function updateProgressDisplay() {
+            const range = document.getElementById('progressBar'); if (chunkList[currentChunkIndex]) document.getElementById('currentChapterTitle').textContent = chunkList[currentChunkIndex].title;
+            range.max = Math.max(0, chunkList.length - 1); range.value = currentChunkIndex;
+            document.getElementById('currentTimeDisplay').textContent = (currentChunkIndex + 1).toString().padStart(2, '0');
+            document.getElementById('totalTimeDisplay').textContent = chunkList.length.toString().padStart(2, '0');
+        }
+        function handleSeekInput(val) { const idx = parseInt(val); document.getElementById('currentTimeDisplay').textContent = (idx + 1).toString().padStart(2, '0'); if (chunkList[idx]) document.getElementById('currentChapterTitle').textContent = chunkList[idx].title; }
+        function handleSeekChange(val) {
+            const newIndex = parseInt(val); if (!isPlaying) {
+                const text = document.getElementById('inputContent').value; if (!text.trim()) return;
+                chunkList = generateSmartChunks(text); if (chunkList.length === 0) return;
+                audioCache = {}; startPlaybackSequence(); currentChunkIndex = newIndex; playChunk(newIndex);
+            } else { audioPlayer.pause(); playChunk(newIndex); }
+        }
+        function updatePlayUI(playing, loading) {
+            const s = document.getElementById('spinner'), p = document.getElementById('iconPlay'), pa = document.getElementById('iconPause');
+            if (loading) { s.classList.remove('hidden'); p.classList.add('hidden'); pa.classList.add('hidden'); }
+            else { s.classList.add('hidden'); if (playing) { p.classList.add('hidden'); pa.classList.remove('hidden'); } else { p.classList.remove('hidden'); pa.classList.add('hidden'); } }
+        }
+        document.getElementById('speedRange').addEventListener('input', (e) => { document.getElementById('speedVal').textContent = e.target.value; if(!audioPlayer.paused) audioPlayer.playbackRate = e.target.value; });
+
+        // --- モーダル・サイドバーUI ---
+        function showInputModal(title, val, cb) {
+            const m = document.getElementById('customInputModal'); document.getElementById('inputModalTitle').textContent = title;
+            const inp = document.getElementById('inputModalValue'); inp.value = val || '';
+            const btn = document.getElementById('inputModalConfirmBtn'); const newBtn = btn.cloneNode(true); btn.parentNode.replaceChild(newBtn, btn);
+            newBtn.onclick = () => { if(inp.value.trim()){ m.classList.add('hidden'); cb(inp.value.trim()); }};
+            m.classList.remove('hidden'); setTimeout(() => inp.focus(), 100);
+        }
+        function closeInputModal() { document.getElementById('customInputModal').classList.add('hidden'); }
+        function showConfirmModal(msg, cb) {
+            const m = document.getElementById('customConfirmModal'); document.getElementById('confirmModalMessage').textContent = msg;
+            const btn = document.getElementById('confirmModalOkBtn'); const newBtn = btn.cloneNode(true); btn.parentNode.replaceChild(newBtn, btn);
+            newBtn.onclick = () => { m.classList.add('hidden'); cb(); }; m.classList.remove('hidden');
+        }
+        function closeConfirmModal() { document.getElementById('customConfirmModal').classList.add('hidden'); }
+        function toggleSidebar() { const s = document.getElementById('sidebar'), o = document.getElementById('sidebarOverlay'); if(s.classList.contains('-translate-x-[120%]')) { s.classList.remove('-translate-x-[120%]'); o.classList.remove('hidden'); setTimeout(()=>o.classList.add('opacity-100'),10); } else { s.classList.add('-translate-x-[120%]'); o.classList.remove('opacity-100'); setTimeout(()=>o.classList.add('hidden'),300); } }
+    </script>
+</body>
+</html>
