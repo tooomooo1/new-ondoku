@@ -736,6 +736,7 @@
         }
 
         async function startPlaybackSequence() { isPlaying = true; updatePlayUI(true, true); document.getElementById('playbackControls').classList.remove('hidden'); updateProgressDisplay(); await playChunk(currentChunkIndex); }
+        
         async function playChunk(index) {
             if (!isPlaying) return; if (index >= chunkList.length) { stopAudioSequence(); return; }
             currentChunkIndex = index; updateProgressDisplay(); const chunkObj = chunkList[index]; if (!audioCache[index]) updatePlayUI(true, true);
@@ -746,14 +747,50 @@
                 audioPlayer.src = URL.createObjectURL(blob); audioPlayer.playbackRate = parseFloat(document.getElementById('speedRange').value);
                 await audioPlayer.play(); updatePlayUI(true, false); preloadNextChunk(index + 1);
                 audioPlayer.onended = () => { playChunk(index + 1); };
-            } catch (e) { console.error(e); alert('再生エラー: APIキーを確認してください'); stopAudioSequence(); }
+            } catch (e) { 
+                console.error(e); 
+                // エラー内容を具体的に表示
+                alert(`再生エラーが発生しました\n\n理由: ${e.message}`); 
+                stopAudioSequence(); 
+            }
         }
+
         async function preloadNextChunk(index) { if (index < chunkList.length && !audioCache[index]) { try { const blob = await fetchAudio(chunkList[index].text); if (isPlaying) audioCache[index] = blob; } catch (e) {} } }
+        
         async function fetchAudio(text) {
             if(apiKey) apiKey = sanitizeApiKey(apiKey);
-            const res = await fetch(API_URL, { method: 'POST', headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'tts-1', input: text, voice: document.getElementById('voiceSelect').value }) });
-            if (!res.ok) throw new Error('API Error'); return await res.blob();
+            try {
+                const res = await fetch(API_URL, { 
+                    method: 'POST', 
+                    headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, 
+                    body: JSON.stringify({ model: 'tts-1', input: text, voice: document.getElementById('voiceSelect').value }) 
+                });
+
+                if (!res.ok) {
+                    // OpenAIのエラーレスポンス（JSON）を解析
+                    const errorJson = await res.json().catch(() => ({}));
+                    const apiErrorMsg = errorJson.error?.message || "";
+
+                    if (res.status === 401) {
+                        throw new Error("APIキーが間違っているか、無効です。設定画面から正しいキーを入力し直してください。");
+                    } else if (res.status === 402 || apiErrorMsg.includes("quota")) {
+                        throw new Error("残高不足（チャージ不足）です。OpenAIの管理画面でクレジットをチャージしてください。");
+                    } else if (res.status === 429) {
+                        throw new Error("リクエスト制限エラーです。少し時間を置いてから再度お試しください。");
+                    } else {
+                        throw new Error(apiErrorMsg || `サーバー通信エラー (Code: ${res.status})`);
+                    }
+                }
+                return await res.blob();
+            } catch (e) {
+                // 通信自体が失敗した場合（オフラインなど）
+                if (e.message === "Failed to fetch") {
+                    throw new Error("インターネットに接続できません。電波状況を確認してください。");
+                }
+                throw e;
+            }
         }
+
         function stopAudioSequence() { isPlaying = false; audioPlayer.pause(); audioPlayer.currentTime = 0; if (audioPlayer.src) { URL.revokeObjectURL(audioPlayer.src); audioPlayer.removeAttribute('src'); } updatePlayUI(false, false); }
         function updateProgressDisplay() {
             const range = document.getElementById('progressBar'); if (chunkList[currentChunkIndex]) document.getElementById('currentChapterTitle').textContent = chunkList[currentChunkIndex].title;
@@ -791,7 +828,7 @@
             newBtn.onclick = () => { m.classList.add('hidden'); cb(); }; m.classList.remove('hidden');
         }
         function closeConfirmModal() { document.getElementById('customConfirmModal').classList.add('hidden'); }
-        function toggleSidebar() { const s = document.getElementById('sidebar'), o = document.getElementById('sidebarOverlay'); if(s.classList.contains('-translate-x-[120%]')) { s.classList.remove('-translate-x-[120%]'); o.classList.remove('hidden'); setTimeout(()=>o.classList.add('opacity-100'),10); } else { s.classList.add('-translate-x-[120%]'); o.classList.remove('opacity-100'); setTimeout(()=>o.classList.add('hidden'),300); } }
+        function toggleSidebar() { const s = document.getElementById('sidebar'), o = document.getElementById('sidebarOverlay'); if(s.classList.contains('-translate-x-[120%]')) { s.classList.remove('-translate-x-[120%]'); o.classList.remove('hidden'); setTimeout(()=>o.classList.add('opacity-100'),10); } else { s.classList.add('-translate-x-[120%]'); o.classList.opacity = 0; setTimeout(()=>o.classList.add('hidden'),300); } }
     </script>
 </body>
 </html>
